@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 NB: run this notebook before running the shinyapp app.R
@@ -18,7 +20,7 @@ The result of this notebook is used in the shiny app, named app.R. In the shiny 
 ```{r}
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load(dplyr, igraph, tidyr, shinythemes, ggplot2, devtools, RCurl)
+pacman::p_load(dplyr, igraph, tidyr, shinythemes, ggplot2, devtools, RCurl, shiny, DT)
 ```
 
 The code below imports the dataset from our github account, since Kaggle's privacy settings (login and password) constitute a barrier to reading the csv directly from there.
