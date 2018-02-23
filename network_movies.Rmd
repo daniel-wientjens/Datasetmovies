@@ -1,0 +1,145 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+NB: run this notebook before running the shinyapp app.R
+
+Quick summary:
+The final aim of this project is to find the shortest path between any two movies in our dataset. We think such output is informative because it enables the user to see what movies best connect a pair of his/her favourite movies.
+
+Extensive summary:
+We first downloaded a movie dataset from Kaggle, which we cleaned and prepared for analysis and alterations. Next we built several functions which calculated the intersection of keywords and genres between any two movies in the dataset. From there we created another function to assign to each pair of movies a value, called weight, which is inversely proportional to the amount of similarity (i.e. same keywords and/or genres) between two movies. We created an adjacency matrix, where entry i,j is the weight of movies i and j, from which we defined a weighted network. From this network, given any pair of movies, we can extract with the function movies_path, the shortest path between them, meaning the path with the least sum of weights. 
+Most of our functions were put in a package named Moviefunctions; the package can be found at: 
+https://github.com/daniel-wientjens/Moviefunctions.git
+The result of this notebook is used in the shiny app, named app.R. In the shiny app, which has to be run after running this notebook, one can look up the shortest path between two movies and check for each pair of consecutive movies along this path the keywords and genres in common.
+
+
+```{r}
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(dplyr, igraph, tidyr, shinythemes, ggplot2, devtools, RCurl)
+```
+
+The code below imports the dataset from our github account, since Kaggle's privacy settings (login and password) constitute a barrier to reading the csv directly from there.
+
+```{r}
+devtools::install_github("daniel-wientjens/Moviefunctions")
+library(Moviefunctions)
+```
+
+```{r}
+tmdb <- read.csv(text = getURL("https://raw.githubusercontent.com/daniel-wientjens/Movieproject/master/tmdb_5000_movies.csv"), stringsAsFactors = FALSE)
+```
+
+The columns of tmdb that will be used to create the adjacency matrix for the graph of movies are 'genres' and 'keywords'. 
+
+We recognised that our dataset has JSON syntax. We tried to treat it as such, but eventually found it easier to extract information "manually" with the two following ugly chunks. We want to create two matrices, one for genres and one for keywords, such that movies are observations and entries are genres and keywords per movie, respectively.
+
+```{r}
+# Genres Cleaning Code
+tmdb1 <- tmdb %>% mutate(genres = gsub('"name"', "", genres)) %>%
+                  mutate(genres = gsub('"id"', "", genres)) %>%
+                  mutate(genres = chartr('}"][}{:1234567890', '                 ', genres)) %>%                         mutate(genres = gsub(" ", "", genres))%>%
+                  separate(genres,into = c("null", "1", "null1", "2", "null2", "3", "null3","4","null4", "5", "null5", "6"),sep = ',' ,remove = TRUE) %>% 
+                  select("1","2","3","4","5","6", "original_title")
+
+matrix_movies <- as.matrix(tmdb1)
+```
+
+```{r}
+# Keywords Cleaning Code 
+tmp <- c(1:40)
+tmp <- as.character(tmp)
+
+tmdb2 <- tmdb %>% mutate(keywords = gsub('"name"', "", keywords)) %>% 
+  mutate(keywords = gsub('"id"', "", keywords))%>% 
+  mutate(keywords = chartr('}"][}{:1234567890', '                 ', keywords))%>% 
+  mutate(keywords = gsub(" ", "", keywords)) %>% 
+  select("keywords", "original_title") %>% 
+  separate(keywords,into = tmp ,sep = ',' ,remove = TRUE) %>% 
+  select(c(seq(2, 41, by=2)), "original_title") 
+
+tmdb2[tmdb2=="d"] <- NA
+tmdb2[tmdb2=="s"] <- NA
+
+matrix_movies2 <- as.matrix(tmdb2)
+colnames(matrix_movies2) <- c(1:21)
+```
+
+We then used the newly formed matrices (matrix_movies and matrix_movies2) to calculate the length of the intersection for given rows. This length is equal to the number of genres (or keywords) that the two respective movies have in common.
+
+We created two functions, that take a pair of movies as inputs:
+- score_genre, which outputs the number of genres in commmon between two movies. 
+- score_keywords, which outputs the number of keywords in commmon between two movies.
+Further documentation can be found in the package description.
+
+
+
+Here, we create the weight function between two movies. The smaller the weight is, the more similar two movies are. Such weight function will be used to create a weighted network of movies.
+Due to the vectorization of the weight function later on we decided to not include this function in the package.
+
+```{r}
+weight <- function(i,j,genre_matrix = matrix_movies, key_matrix = matrix_movies2) {
+  if (i< j) {
+    a <- score_key(i,j, key_matrix)
+    b <- score_genre(i,j,genre_matrix)
+    return(1/(100*a+b)) 
+  }
+  else{
+    return(0)
+  }
+}
+```
+
+
+Next we vectorize the weight function, so that we can generate an adjacency matrix that defines a graph. 
+
+NOTE: runtime of the following chunch can take 2 or 3 minutes.
+To reduce the runtime we only take 2000 movies out of the 4803 available.
+
+```{r}
+#create adjacency matrix for graph
+VecWeight <- Vectorize(weight)
+graph_matrix <- outer(seq(1,2000),seq(1,2000),VecWeight) 
+
+#data frame that contains excusively the movies in the graph. This will be used in the Shiny App Interface.
+movies_used <- tmdb1[1:2000,] 
+
+#create graph of movies from adjacency matrix defined above
+graph <- graph_from_adjacency_matrix(graph_matrix, mode = c("undirected"), weighted = T)
+```
+
+```{r}
+#check for disconnected vertices in the graph
+sums <- apply(graph_matrix, 2, sum)
+which(sums ==0)
+```
+Due to reduced run time, we only computed the upper half of the adjacency matrix, which is symmetrical. By not allowing self-edges (through the definition of the weight function), the diagonal containes only zeros. Because of these last two points, the first column of the matrix will only contain zeros. This is the only zero column in the matrix, as the chunck above illustrates. Therefore, there are no vertices in the graph of movies that are disconnected. This means that our app will always be able to find a path given a pair of movies.
+
+
+Given the names of two movies, the function movies_path calculates the shortest path between them and converts the output into a dataframe (for shiny app compatibility). 
+Further documentation can be found in the package description.
+
+```{r}
+movies_path(c("Avatar","Titanic"), tmdb, graph)
+```
+
+
+
+Given two movies, the function similarities outputs the genres or the keywords they have in common.
+Further documentation can be found in the package description.
+
+```{r}
+similarities(c("Poseidon","Titanic"), tmdb, matrix_movies2)
+```
+
+```{r}
+similarities(c("Poseidon","Titanic"), tmdb, matrix_movies)
+```
+
+
+
+
+
+
